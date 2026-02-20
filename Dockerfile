@@ -50,7 +50,7 @@ RUN mkdir -p bootstrap/cache \
 
 # Install PHP dependencies — skip post-install scripts (artisan needs .env at runtime)
 RUN composer install --no-dev --optimize-autoloader --no-interaction --no-scripts \
-    && composer dump-autoload --optimize
+    && composer dump-autoload --optimize --no-scripts
 
 # Set permissions
 RUN chown -R www-data:www-data /var/www/html \

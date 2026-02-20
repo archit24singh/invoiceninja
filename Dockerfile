@@ -2,6 +2,18 @@ ARG PHP_VERSION=8.2
 ARG BAK_STORAGE_PATH=/var/www/app/docker-backup-storage/
 ARG BAK_PUBLIC_PATH=/var/www/app/docker-backup-public/
 
+# ─── Stage 1: Build React UI ──────────────────────────────────────────────────
+FROM node:20-alpine AS reactbuild
+
+RUN apk add --no-cache git
+
+RUN git clone https://github.com/invoiceninja/ui.git /ui
+
+WORKDIR /ui
+
+RUN npm install && npm run build
+
+# ─── Stage 2: PHP application ─────────────────────────────────────────────────
 FROM php:${PHP_VERSION}-fpm-alpine
 
 ARG UID=1500
@@ -89,6 +101,14 @@ RUN rm -f bootstrap/cache/config.php \
 # Back up storage and public so the entrypoint can seed mounted volumes
 RUN mv storage $BAK_STORAGE_PATH \
     && mv public $BAK_PUBLIC_PATH
+
+# Copy compiled React UI from build stage
+COPY --from=reactbuild /ui/dist /var/www/app/public/react
+
+# Set ownership and permissions on React assets
+RUN chown -R 1500:1500 /var/www/app/public/react \
+    && find /var/www/app/public/react -type d -exec chmod 777 {} \; \
+    && find /var/www/app/public/react -type f -exec chmod 777 {} \;
 
 # Set ownership and fix memory_limit in php.ini
 RUN mkdir -p /var/www/app/public \

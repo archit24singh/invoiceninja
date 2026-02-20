@@ -1,65 +1,107 @@
-FROM php:8.2-fpm
+ARG PHP_VERSION=8.2
+ARG BAK_STORAGE_PATH=/var/www/app/docker-backup-storage/
+ARG BAK_PUBLIC_PATH=/var/www/app/docker-backup-public/
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-        git \
-        curl \
-        libpng-dev \
-        libonig-dev \
-        libxml2-dev \
-        libzip-dev \
-        libgmp-dev \
-        zip \
-        unzip \
-    && docker-php-ext-install \
-        pdo_mysql \
-        mysqli \
+FROM php:${PHP_VERSION}-fpm-alpine
+
+ARG UID=1500
+ARG BAK_STORAGE_PATH
+ARG BAK_PUBLIC_PATH
+
+ENV INVOICENINJA_USER=invoiceninja
+ENV BAK_STORAGE_PATH=$BAK_STORAGE_PATH
+ENV BAK_PUBLIC_PATH=$BAK_PUBLIC_PATH
+ENV IS_DOCKER=true
+ENV APP_ENV=production
+ENV LOG=errorlog
+ENV SNAPPDF_EXECUTABLE_PATH=/usr/bin/chromium-browser
+
+# Use production php.ini
+RUN mv /usr/local/etc/php/php.ini-production /usr/local/etc/php/php.ini
+
+# Install mlocati PHP extension installer
+COPY --from=mlocati/php-extension-installer /usr/bin/install-php-extensions /usr/local/bin/
+
+# Install system packages: nginx, supervisor, chromium (PDF), fonts, mysql client
+RUN apk add --no-cache \
+        mariadb-connector-c \
+        font-isas-misc \
+        ttf-freefont \
+        ttf-dejavu \
+        supervisor \
+        mysql-client \
+        chromium \
+        nginx
+
+# Install PHP extensions
+RUN install-php-extensions \
         bcmath \
+        exif \
         gd \
-        mbstring \
-        xml \
-        zip \
         gmp \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+        intl \
+        mysqli \
+        opcache \
+        pdo_mysql \
+        zip \
+        @composer \
+    && rm /usr/local/bin/install-php-extensions
 
-# Install Composer
-COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+# Copy rootfs config and scripts into the image
+COPY rootfs /
 
-# Create Invoice Ninja user (uid 1500)
-RUN groupadd -g 1500 invoiceninja && useradd -u 1500 -g 1500 -s /bin/bash invoiceninja
+# Create invoiceninja user (uid/gid 1500)
+RUN addgroup --gid=$UID -S "$INVOICENINJA_USER" \
+    && adduser --uid=$UID \
+        --disabled-password \
+        --gecos "" \
+        --home "/var/www/app" \
+        --ingroup "$INVOICENINJA_USER" \
+        "$INVOICENINJA_USER"
 
 WORKDIR /var/www/app
 
-# Copy application files
-COPY . .
+# Copy local application source
+COPY --chown=$UID:$UID . .
 
-# Ensure all required framework directories exist (Git does not track empty dirs)
+# Ensure all required runtime directories exist
 RUN mkdir -p \
         bootstrap/cache \
         storage/framework/sessions \
         storage/framework/views \
         storage/framework/cache/data \
         storage/logs \
-        storage/app/public
+        storage/app/public \
+        public/logo \
+        /run/nginx
 
-# Install PHP dependencies — skip scripts that require a runtime .env
+# Install PHP dependencies — skip artisan scripts that require a live .env
 RUN composer install --no-dev --optimize-autoloader --no-interaction --no-scripts \
     && composer dump-autoload --optimize --no-scripts
 
-# Purge any stale build-time config/route/view caches
+# Purge any stale build-time caches
 RUN rm -f bootstrap/cache/config.php \
            bootstrap/cache/routes*.php \
            bootstrap/cache/packages.php \
            bootstrap/cache/services.php \
            bootstrap/cache/events.php
 
-# Set ownership to invoiceninja (1500:1500) and enforce permissions
-RUN chown -R 1500:1500 /var/www/app \
-    && chmod -R 775 storage bootstrap/cache \
-    && find /var/www/app/public -type d -exec chmod 755 {} \; \
-    && find /var/www/app/public -type f -exec chmod 644 {} \;
+# Back up storage and public so the entrypoint can seed mounted volumes
+RUN mv storage $BAK_STORAGE_PATH \
+    && mv public $BAK_PUBLIC_PATH
 
-EXPOSE 9000
+# Set ownership and fix memory_limit in php.ini
+RUN mkdir -p /var/www/app/public \
+    && chown -R www-data:www-data /var/lib/nginx /var/www/app/ \
+    && sed -i 's/memory_limit = 128M/memory_limit = 256M/g' /usr/local/etc/php/php.ini
 
-CMD ["php-fpm"]
+# Make all entrypoint scripts executable
+RUN chmod +x /usr/local/bin/docker-entrypoint \
+    && chmod +x /usr/local/bin/invoiceninja-init.sh \
+    && chmod +x /usr/local/bin/shutdown.sh \
+    && chmod +x /docker-entrypoint-init.d/10-init-in.sh
+
+EXPOSE 80
+
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint"]
+CMD ["supervisord"]

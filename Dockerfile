@@ -42,14 +42,17 @@ WORKDIR /var/www/html
 # Copy application files
 COPY . .
 
+# Create required directories before composer runs (artisan needs bootstrap/cache)
+RUN mkdir -p bootstrap/cache \
+        storage/framework/{sessions,views,cache} \
+        storage/logs \
+        storage/app/public
+
 # Install PHP dependencies (no dev, optimized)
 RUN composer install --no-dev --optimize-autoloader --no-interaction
 
-# Create storage directories and set permissions
-RUN mkdir -p storage/framework/{sessions,views,cache} \
-        storage/logs \
-        bootstrap/cache \
-    && chown -R www-data:www-data /var/www/html \
+# Set permissions
+RUN chown -R www-data:www-data /var/www/html \
     && chmod -R 775 storage bootstrap/cache
 
 EXPOSE 80

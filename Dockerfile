@@ -30,9 +30,9 @@ COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 RUN a2enmod rewrite
 
 # Set DocumentRoot to Laravel public/
-RUN sed -i 's|DocumentRoot /var/www/html|DocumentRoot /var/www/html/public|g' \
+RUN sed -i 's|DocumentRoot /var/www/html|DocumentRoot /var/www/app/public|g' \
         /etc/apache2/sites-available/000-default.conf \
-    && echo '<Directory /var/www/html/public>\n\
+    && echo '<Directory /var/www/app/public>\n\
     AllowOverride All\n\
     Require all granted\n\
 </Directory>' >> /etc/apache2/sites-available/000-default.conf
@@ -40,7 +40,7 @@ RUN sed -i 's|DocumentRoot /var/www/html|DocumentRoot /var/www/html/public|g' \
 # Create Invoice Ninja user (uid 1500)
 RUN groupadd -g 1500 invoiceninja && useradd -u 1500 -g 1500 -s /bin/bash invoiceninja
 
-WORKDIR /var/www/html
+WORKDIR /var/www/app
 
 # Copy application files
 COPY . .
@@ -66,8 +66,10 @@ RUN rm -f bootstrap/cache/config.php \
            bootstrap/cache/events.php
 
 # Set ownership to invoiceninja (1500:1500) and enforce permissions
-RUN chown -R 1500:1500 /var/www/html \
-    && chmod -R 775 storage bootstrap/cache
+RUN chown -R 1500:1500 /var/www/app \
+    && chmod -R 775 storage bootstrap/cache \
+    && find /var/www/app/public -type d -exec chmod 755 {} \; \
+    && find /var/www/app/public -type f -exec chmod 644 {} \;
 
 EXPOSE 80
 

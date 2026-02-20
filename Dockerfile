@@ -92,7 +92,7 @@ RUN mv storage $BAK_STORAGE_PATH \
 
 # Set ownership and fix memory_limit in php.ini
 RUN mkdir -p /var/www/app/public \
-    && chown -R www-data:www-data /var/lib/nginx /var/www/app/ \
+    && chown -R 1500:1500 /var/lib/nginx /var/www/app/ \
     && sed -i 's/memory_limit = 128M/memory_limit = 256M/g' /usr/local/etc/php/php.ini
 
 # Make all entrypoint scripts executable

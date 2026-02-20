@@ -1,4 +1,4 @@
-FROM php:8.2-apache
+FROM php:8.2-fpm
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -25,17 +25,6 @@ RUN apt-get update && apt-get install -y \
 
 # Install Composer
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
-
-# Enable Apache mod_rewrite
-RUN a2enmod rewrite
-
-# Set DocumentRoot to Laravel public/
-RUN sed -i 's|DocumentRoot /var/www/html|DocumentRoot /var/www/app/public|g' \
-        /etc/apache2/sites-available/000-default.conf \
-    && echo '<Directory /var/www/app/public>\n\
-    AllowOverride All\n\
-    Require all granted\n\
-</Directory>' >> /etc/apache2/sites-available/000-default.conf
 
 # Create Invoice Ninja user (uid 1500)
 RUN groupadd -g 1500 invoiceninja && useradd -u 1500 -g 1500 -s /bin/bash invoiceninja
@@ -71,6 +60,6 @@ RUN chown -R 1500:1500 /var/www/app \
     && find /var/www/app/public -type d -exec chmod 755 {} \; \
     && find /var/www/app/public -type f -exec chmod 644 {} \;
 
-EXPOSE 80
+EXPOSE 9000
 
-CMD ["apache2-foreground"]
+CMD ["php-fpm"]

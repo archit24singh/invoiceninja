@@ -37,23 +37,36 @@ RUN sed -i 's|DocumentRoot /var/www/html|DocumentRoot /var/www/html/public|g' \
     Require all granted\n\
 </Directory>' >> /etc/apache2/sites-available/000-default.conf
 
+# Create Invoice Ninja user (uid 1500)
+RUN groupadd -g 1500 invoiceninja && useradd -u 1500 -g 1500 -s /bin/bash invoiceninja
+
 WORKDIR /var/www/html
 
 # Copy application files
 COPY . .
 
-# Create required directories before composer runs (artisan needs bootstrap/cache)
-RUN mkdir -p bootstrap/cache \
-        storage/framework/{sessions,views,cache} \
+# Ensure all required framework directories exist (Git does not track empty dirs)
+RUN mkdir -p \
+        bootstrap/cache \
+        storage/framework/sessions \
+        storage/framework/views \
+        storage/framework/cache/data \
         storage/logs \
         storage/app/public
 
-# Install PHP dependencies — skip post-install scripts (artisan needs .env at runtime)
+# Install PHP dependencies — skip scripts that require a runtime .env
 RUN composer install --no-dev --optimize-autoloader --no-interaction --no-scripts \
     && composer dump-autoload --optimize --no-scripts
 
-# Set permissions
-RUN chown -R www-data:www-data /var/www/html \
+# Purge any stale build-time config/route/view caches
+RUN rm -f bootstrap/cache/config.php \
+           bootstrap/cache/routes*.php \
+           bootstrap/cache/packages.php \
+           bootstrap/cache/services.php \
+           bootstrap/cache/events.php
+
+# Set ownership to invoiceninja (1500:1500) and enforce permissions
+RUN chown -R 1500:1500 /var/www/html \
     && chmod -R 775 storage bootstrap/cache
 
 EXPOSE 80

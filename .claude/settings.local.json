@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(base='C:/Users/benip/OneDrive/Desktop/INVOICENINJA/invoiceninja')",
+      "Bash(python3 -c \":*)"
+    ]
+  }
+}

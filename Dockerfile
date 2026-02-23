@@ -2,16 +2,13 @@ ARG PHP_VERSION=8.2
 ARG BAK_STORAGE_PATH=/var/www/app/docker-backup-storage/
 ARG BAK_PUBLIC_PATH=/var/www/app/docker-backup-public/
 
-# ─── Stage 1: Build React UI ──────────────────────────────────────────────────
-FROM node:20-alpine AS reactbuild
+# ─── Stage 1: Download compiled frontend assets ───────────────────────────────
+FROM alpine AS prepare-frontend
 
-RUN apk add --no-cache git
-
-RUN git clone https://github.com/invoiceninja/ui.git /ui
-
-WORKDIR /ui
-
-RUN npm install && npm run build
+RUN apk add --no-cache curl tar \
+    && mkdir -p /tmp/app \
+    && curl -fsSL https://github.com/invoiceninja/invoiceninja/releases/latest/download/invoiceninja.tar.gz \
+       | tar -xz -C /tmp/app
 
 # ─── Stage 2: PHP application ─────────────────────────────────────────────────
 FROM php:${PHP_VERSION}-fpm-alpine
@@ -76,6 +73,12 @@ WORKDIR /var/www/app
 # Copy local application source
 COPY --chown=$UID:$UID . .
 
+# Overwrite public/ with compiled frontend assets from the official release tarball
+COPY --from=prepare-frontend --chown=$UID:$UID /tmp/app/public /var/www/app/public
+
+# Wire up the React SPA entry point
+RUN ln -sf /var/www/app/resources/views/react/index.blade.php /var/www/app/public/index.html
+
 # Ensure all required runtime directories exist
 RUN mkdir -p \
         bootstrap/cache \
@@ -101,14 +104,6 @@ RUN rm -f bootstrap/cache/config.php \
 # Back up storage and public so the entrypoint can seed mounted volumes
 RUN mv storage $BAK_STORAGE_PATH \
     && mv public $BAK_PUBLIC_PATH
-
-# Copy compiled React UI from build stage
-COPY --from=reactbuild /ui/dist /var/www/app/public/react
-
-# Set ownership and permissions on React assets
-RUN chown -R 1500:1500 /var/www/app/public/react \
-    && find /var/www/app/public/react -type d -exec chmod 777 {} \; \
-    && find /var/www/app/public/react -type f -exec chmod 777 {} \;
 
 # Set ownership and fix memory_limit in php.ini
 RUN mkdir -p /var/www/app/public \

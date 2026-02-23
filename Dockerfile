@@ -2,15 +2,24 @@ ARG PHP_VERSION=8.2
 ARG BAK_STORAGE_PATH=/var/www/app/docker-backup-storage/
 ARG BAK_PUBLIC_PATH=/var/www/app/docker-backup-public/
 
-# ─── Stage 1: Download compiled frontend assets ───────────────────────────────
-FROM alpine AS prepare-frontend
+# ─── Stage 1: Official release — pre-built vendor/ and compiled public/ ───────
+FROM alpine AS official
 
-RUN apk add --no-cache curl tar \
-    && mkdir -p /tmp/app \
-    && curl -fsSL https://github.com/invoiceninja/invoiceninja/releases/latest/download/invoiceninja.tar.gz \
-       | tar -xz -C /tmp/app
+RUN apk add --no-cache curl tar grep \
+    && mkdir -p /var/www/app \
+    && DOWNLOAD_URL=$(curl -s "https://api.github.com/repos/invoiceninja/invoiceninja/releases/latest" \
+         | grep -o '"browser_download_url": "[^"]*invoiceninja\.tar"' \
+         | cut -d '"' -f 4) \
+    && curl -fsSL "$DOWNLOAD_URL" | tar -x -C /var/www/app
 
-# ─── Stage 2: PHP application ─────────────────────────────────────────────────
+# ─── Stage 2: Custom source — your fork with all code changes ─────────────────
+FROM alpine AS source
+
+RUN apk add --no-cache git \
+    && git clone --depth=1 --branch v5-stable \
+         https://github.com/archit24singh/invoiceninja.git /var/www/app
+
+# ─── Stage 3: PHP application ─────────────────────────────────────────────────
 FROM php:${PHP_VERSION}-fpm-alpine
 
 ARG UID=1500
@@ -31,7 +40,7 @@ RUN mv /usr/local/etc/php/php.ini-production /usr/local/etc/php/php.ini
 # Install mlocati PHP extension installer
 COPY --from=mlocati/php-extension-installer /usr/bin/install-php-extensions /usr/local/bin/
 
-# Install system packages: nginx, supervisor, chromium (PDF), fonts, mysql client
+# Install system packages
 RUN apk add --no-cache \
         mariadb-connector-c \
         font-isas-misc \
@@ -53,10 +62,9 @@ RUN install-php-extensions \
         opcache \
         pdo_mysql \
         zip \
-        @composer \
     && rm /usr/local/bin/install-php-extensions
 
-# Copy rootfs config and scripts into the image
+# Copy rootfs config and scripts
 COPY rootfs /
 
 # Create invoiceninja user (uid/gid 1500)
@@ -70,11 +78,16 @@ RUN addgroup --gid=$UID -S "$INVOICENINJA_USER" \
 
 WORKDIR /var/www/app
 
-# Copy local application source
-COPY --chown=$UID:$UID . .
+# 1. Base: official tarball — provides pre-installed vendor/ and compiled public/
+COPY --from=official --chown=$UID:$UID /var/www/app .
 
-# Overwrite public/ with compiled frontend assets from the official release tarball
-COPY --from=prepare-frontend --chown=$UID:$UID /tmp/app/public /var/www/app/public
+# 2. Overlay: your fork — applies all code changes on top.
+#    vendor/ is not present in the repo (.gitignore), so the tarball's vendor/ is preserved.
+#    public/ from the repo (uncompiled) overwrites the tarball's compiled version here.
+COPY --from=source --chown=$UID:$UID /var/www/app .
+
+# 3. Restore: compiled public/ from the official tarball, replacing the uncompiled version
+COPY --from=official --chown=$UID:$UID /var/www/app/public ./public
 
 # Wire up the React SPA entry point
 RUN ln -sf /var/www/app/resources/views/react/index.blade.php /var/www/app/public/index.html
@@ -90,24 +103,21 @@ RUN mkdir -p \
         public/logo \
         /run/nginx
 
-# Install PHP dependencies — skip artisan scripts that require a live .env
-RUN composer install --no-dev --optimize-autoloader --no-interaction --no-scripts \
-    && composer dump-autoload --optimize --no-scripts
-
-# Purge any stale build-time caches
-RUN rm -f bootstrap/cache/config.php \
+# Remove any committed .env and purge stale build-time caches
+RUN rm -f .env \
+           bootstrap/cache/config.php \
            bootstrap/cache/routes*.php \
            bootstrap/cache/packages.php \
            bootstrap/cache/services.php \
            bootstrap/cache/events.php
 
-# Back up storage and public so the entrypoint can seed mounted volumes
+# Back up storage and public so the entrypoint can seed mounted volumes at runtime
 RUN mv storage $BAK_STORAGE_PATH \
     && mv public $BAK_PUBLIC_PATH
 
-# Set ownership and fix memory_limit in php.ini
+# Fix ownership and php.ini memory limit
 RUN mkdir -p /var/www/app/public \
-    && chown -R 1500:1500 /var/lib/nginx /var/www/app/ \
+    && chown -R $UID:$UID /var/lib/nginx /var/www/app/ \
     && sed -i 's/memory_limit = 128M/memory_limit = 256M/g' /usr/local/etc/php/php.ini
 
 # Make all entrypoint scripts executable
